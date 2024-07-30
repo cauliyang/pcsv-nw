@@ -1,5 +1,7 @@
+use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
+use log::debug;
 use polars::frame::row::Row;
 use rayon::prelude::*;
 use std::io;
@@ -20,9 +22,9 @@ struct Cli {
     #[arg(short, long, default_value = "2")]
     threads: Option<usize>,
 
-    /// prefix for output files
+    /// maximum number of prcessed files
     #[arg(short, long)]
-    prefix: Option<String>,
+    max_files: Option<usize>,
 
     /// Turn debugging information on
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -42,13 +44,15 @@ where
     Ok(csvs)
 }
 
-fn load_polars_from_path<P: AsRef<Path>>(path: P) -> Result<(PathBuf, DataFrame)> {
+fn load_polars_from_path<P: AsRef<Path>>(path: P) -> PolarsResult<DataFrame> {
+    debug!("load csv file: {:?}", path.as_ref());
+
     let path_buf = path.as_ref().to_path_buf();
-    let df = CsvReadOptions::default()
+
+    CsvReadOptions::default()
         .with_has_header(false)
         .try_into_reader_with_file_path(Some(path_buf.clone()))?
-        .finish()?;
-    Ok((path_buf, df))
+        .finish()
 }
 
 fn find_minimum_value_in_third_column(df: &DataFrame) -> Result<(usize, Row)> {
@@ -59,52 +63,63 @@ fn find_minimum_value_in_third_column(df: &DataFrame) -> Result<(usize, Row)> {
     Ok((arg_min, min_row))
 }
 
-fn write_result(results: &[(String, usize, Row)]) -> Result<()> {
+fn write_result(results: &[Vec<String>]) -> Result<()> {
     let mut writer = csv::Writer::from_writer(io::stdout());
-    let mut row_value: Vec<String> = Vec::new();
-    for (file_name, _idx, row) in results {
-        row_value.clear();
-        row_value.push(file_name.clone());
-
-        let row_str = row
-            .0
-            .par_iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<String>>();
-
-        row_value.extend(row_str);
-        writer.write_record(&row_value)?;
+    for row_values in results {
+        writer.write_record(row_values)?;
     }
-
     Ok(())
 }
 
-fn worker<P>(folder: P) -> Result<()>
+fn process_csv<P>(path: P) -> Result<Vec<String>>
+where
+    P: AsRef<Path>,
+{
+    let df = load_polars_from_path(path.as_ref())
+        .context(format!("error loading csv file: {:?}", path.as_ref()))?;
+
+    let (row_index, row) = find_minimum_value_in_third_column(&df)?;
+
+    let row_values = row.0.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+
+    let row_values = row_values.join(" ");
+
+    let file_name = path
+        .as_ref()
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let result = vec![file_name, (row_index + 1).to_string(), row_values];
+    Ok(result)
+}
+
+fn worker<P>(folder: P, max_files: Option<usize>) -> Result<()>
 where
     P: AsRef<Path>,
 {
     info!("collect csv paths from folder: {:?}", folder.as_ref());
+    let mut csv_paths = find_csv_paths(folder)?;
+    info!("found {} csv files", csv_paths.len());
 
-    let csv_paths = find_csv_paths(folder)?;
+    if let Some(max_files) = max_files {
+        info!("truncate csv files to: {} files", max_files);
+        csv_paths.truncate(max_files);
+    }
 
-    let csv_dfs = csv_paths
-        .par_iter()
-        .map(load_polars_from_path)
-        .collect::<Result<Vec<(PathBuf, DataFrame)>>>()?;
-
-    info!("found {} csv files", csv_dfs.len());
-
-    let results = csv_dfs
-        .par_iter()
-        .map(|(path, df)| {
-            let (row_index, row) = find_minimum_value_in_third_column(df)?;
-            Ok((
-                path.file_stem().unwrap().to_string_lossy().to_string(),
-                row_index,
-                row,
-            ))
+    let results = csv_paths
+        .iter()
+        .filter_map(|path| match process_csv(path) {
+            Ok(result) => Some(result),
+            Err(e) => {
+                log::error!("error: {:?}", e);
+                None
+            }
         })
-        .collect::<Result<Vec<(String, usize, Row)>>>()?;
+        .collect::<Vec<Vec<String>>>();
+
+    info!("found {} results", results.len());
 
     write_result(&results)?;
     Ok(())
@@ -129,8 +144,7 @@ fn main() -> Result<()> {
         .unwrap();
 
     info!("threads number: {}", cli.threads.unwrap());
-
-    worker(cli.folder)?;
+    worker(cli.folder, cli.max_files)?;
 
     let elapsed = start.elapsed();
     log::info!("elapsed time: {:.2?}", elapsed);
