@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use walkdir::DirEntry;
 use walkdir::WalkDir;
 
 use log::info;
@@ -35,12 +36,31 @@ fn find_csv_paths<P>(folder: P) -> Result<Vec<PathBuf>>
 where
     P: AsRef<Path>,
 {
-    let mut csvs = vec![];
-    for entry in WalkDir::new(folder).into_iter().filter_map(|e| e.ok()) {
-        if entry.path().extension().and_then(|e| e.to_str()) == Some("csv") {
-            csvs.push(entry.path().to_path_buf());
-        }
-    }
+    // find folder starts with "fit"
+    let all_folders: Vec<PathBuf> = WalkDir::new(folder.as_ref())
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_str().unwrap().starts_with("fit"))
+        .inspect(|e| log::debug!("entry: {:?}", e))
+        .map(|e| e.path().to_path_buf())
+        .collect();
+
+    log::debug!("all_folders: {}", all_folders.len());
+
+    let csvs = all_folders
+        .par_iter()
+        .flat_map(|folder| {
+            let current_csv: Vec<PathBuf> = WalkDir::new(folder)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().and_then(|e| e.to_str()) == Some("csv"))
+                .map(|e| e.path().to_path_buf())
+                .collect();
+            current_csv
+        })
+        .collect::<Vec<PathBuf>>();
+
     Ok(csvs)
 }
 
