@@ -7,7 +7,6 @@ use rayon::prelude::*;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use walkdir::DirEntry;
 use walkdir::WalkDir;
 
 use log::info;
@@ -46,7 +45,7 @@ where
         .map(|e| e.path().to_path_buf())
         .collect();
 
-    log::debug!("all_folders: {}", all_folders.len());
+    log::info!("collect folders: {}", all_folders.len());
 
     let csvs = all_folders
         .par_iter()
