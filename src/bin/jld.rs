@@ -4,6 +4,7 @@ use clap::Parser;
 use log::debug;
 use polars::frame::row::Row;
 use rayon::prelude::*;
+use std::fmt::Result;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -113,6 +114,13 @@ where
     Ok(result)
 }
 
+fn read_jld<P>(jld_path: P) -> Result<()> {
+    use Color::*;
+    let file = File::open(jld_path.as_ref())?; // open for reading
+    let ds = file.dataset("dir/pixels")?; // open the dataset
+    Ok(())
+}
+
 fn worker<P>(folder: P, max_files: Option<usize>) -> Result<()>
 where
     P: AsRef<Path>,
@@ -126,20 +134,22 @@ where
         jld_paths.truncate(max_files);
     }
 
-    let results = jld_paths
-        .iter()
-        .filter_map(|path| match process_csv(path) {
-            Ok(result) => Some(result),
-            Err(e) => {
-                log::error!("error: {:?}", e);
-                None
-            }
-        })
-        .collect::<Vec<Vec<String>>>();
+    let result = read_jld(jld_paths.iter().next().unwrap()).unwrap();
 
-    info!("found {} results", results.len());
+    // let results = jld_paths
+    //     .iter()
+    //     .filter_map(|path| match process_csv(path) {
+    //         Ok(result) => Some(result),
+    //         Err(e) => {
+    //             log::error!("error: {:?}", e);
+    //             None
+    //         }
+    //     })
+    //     .collect::<Vec<Vec<String>>>();
 
-    write_result(&results)?;
+    // info!("found {} results", results.len());
+
+    // write_result(&results)?;
     Ok(())
 }
 

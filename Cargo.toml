@@ -11,11 +11,13 @@ clap = { version = "*", features = ["derive"] }
 ahash = "0.8.11"
 itertools = "0.13"
 derive_builder = "0.20"
-lexical = "6.1"
+lexical = "7.0"
 bstr = "1.9"
 anyhow = "1.0"
 rayon = "1.10"
 log = '0.4'
 env_logger = "0.11"
 walkdir = "2.3"
-polars = { version = "*", features = ["polars-ops"] }
+polars = { version = "*", features = ["polars-ops", "lazy", "csv"] }
+
+hdf5 = "0.8.1"
